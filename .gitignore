@@ -1,0 +1,33 @@
+# Ignore conda environment
+.conda/
+
+
+# Ignore feather files
+*.feather
+processed_data/
+*.npy 
+# Ignore workspace files
+*.code-workspace
+analysis_results/
+runs/
+*.csv
+*.png
+*.xlsx
+# Ignore P12 Dataset
+rawdata/
+
+# Ignore models
+*.pt
+*.ckpt
+*.pth
+*.json
+*.safetensors
+
+# Ignore logs
+*.wandb
+*.log
+*.pyc
+*.txt
+*.yaml
+*.bin
+*.tex
