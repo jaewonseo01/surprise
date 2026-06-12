@@ -1212,16 +1212,16 @@ def main():
     )
 
     ft_ckpt = ModelCheckpoint(
-        save_top_k=1,             # single best
-        save_last=True,           # keep last too (optional)
+        save_top_k=1,
+        save_last=True,
         mode="max",
-        monitor="val_ap",         # macro AUPRC
+        monitor="val_ap",
         dirpath=ft_dir,
         filename=f"finetune-seed{args.seed}" + "-{epoch:03d}-{val_ap:.4f}",
     )
 
     ft_early = EarlyStopping(
-        monitor="val_ap",         # macro AUPRC
+        monitor="val_ap",
         mode="max",
         patience=args.finetune_patience,
         min_delta=args.min_delta,
@@ -1240,7 +1240,6 @@ def main():
     )
     ft_trainer.fit(ft_model, dm_src)
 
-    # load best finetuned checkpoint as final_model
     finetuned_path = ft_ckpt.best_model_path or ft_ckpt.last_model_path
     if not finetuned_path:
         raise RuntimeError("No finetune checkpoint produced.")
@@ -1255,7 +1254,6 @@ def main():
         outcome_names=outcome_cols,
     )
 
-    # -------- save final (explicit)
     final_path = os.path.join(args.save_dir, f"DuETT_{args.source}_{args.split}.pt")
     torch.save(
         {
@@ -1269,7 +1267,6 @@ def main():
         final_path,
     )
 
-    # -------- evaluate source + target (target is mandatory)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     src_test_loss, src_auroc, src_auprc, src_acc, src_auroc_per, src_auprc_per, src_valid_mask = evaluate_on_dm(
@@ -1289,7 +1286,6 @@ def main():
             "test/target_auroc": float(tgt_auroc),
             "test/target_auprc": float(tgt_auprc),
             "test/target_acc": float(tgt_acc),
-            
         }
 
         for i, name in enumerate(outcome_cols):

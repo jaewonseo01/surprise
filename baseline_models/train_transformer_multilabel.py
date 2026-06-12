@@ -23,6 +23,7 @@ MISSING_VALUE = 0.0     # feature missing
 MISSING_TIME_MIN = -1.0 # time padding in minutes
 MISSING_TIME_HR = MISSING_TIME_MIN / 2880.0
 
+
 def _aug_tag(
     use_source_aug: bool,
     source_aug_suffix: str,
@@ -33,13 +34,13 @@ def _aug_tag(
     tgt_tag = f"tgtAug-{target_aug_suffix}" if use_target_aug else "tgtOrig"
     return f"{src_tag}__{tgt_tag}"
 
+
 def _compute_feature_means_from_raw(
-    X_features: np.ndarray,   # [N,T,F], missing=0
-    X_time: np.ndarray,       # [N,T,1] or [N,T], padding=-1
+    X_features: np.ndarray,
+    X_time: np.ndarray,
     missing_value_num: float = MISSING_VALUE,
     missing_time_num: float = MISSING_TIME_MIN,
 ) -> np.ndarray:
-    """Feature means over observed entries only, within valid time window (before padding)."""
     if X_time.ndim == 3:
         times = X_time[:, :, 0]
     else:
@@ -70,14 +71,6 @@ def prepare_data_with_imputation_raw(
     source: str,
     target: str,
 ):
-    """
-    Returns RAW (numpy) dicts BEFORE normalization/tensorize.
-    Applies mean imputation on RAW arr stage using SOURCE TRAIN means.
-    Conventions:
-      - values missing = 0.0
-      - time padding   = -1.0 (minutes)
-      - binary itemids are already converted to -1/+1 in runner preprocessing.
-    """
     assert source in {"mimic", "eicu"} and target in {"mimic", "eicu"} and source != target
 
     def load_split_from(processed_dir: str, domain: str, split: str):
@@ -85,27 +78,21 @@ def prepare_data_with_imputation_raw(
         y = np.load(os.path.join(processed_dir, f"arr_outcomes_{domain}_{split}.npy"), allow_pickle=True).astype(np.float32)
         return P, y
 
-
-
-    # source splits from split{i}
     Ptrain, ytrain = load_split_from(processed_dir_source, source, "train")
     Pval,   yval   = load_split_from(processed_dir_source, source, "valid")
     Ptest,  ytest  = load_split_from(processed_dir_source, source, "test")
 
-    # target test ONLY from split1 (fixed)
     Ptest_tgt, ytest_tgt = load_split_from(processed_dir_target_test, target, "test")
 
-
-    # ---- extract raw arrays ----
     def extract_raw(P_list, y_arr):
         N = len(P_list)
         T, F = P_list[0]["arr"].shape
         D = len(P_list[0]["extended_static"])
 
-        X = np.stack([p["arr"] for p in P_list], axis=0).astype(np.float32)          # [N,T,F]
-        TT = np.stack([p["time"] for p in P_list], axis=0).astype(np.float32)       # [N,T,1]
-        S = np.stack([p["extended_static"] for p in P_list], axis=0).astype(np.float32)  # [N,D]
-        Y = y_arr.astype(np.float32)                                                # [N,C]
+        X = np.stack([p["arr"] for p in P_list], axis=0).astype(np.float32)
+        TT = np.stack([p["time"] for p in P_list], axis=0).astype(np.float32)
+        S = np.stack([p["extended_static"] for p in P_list], axis=0).astype(np.float32)
+        Y = y_arr.astype(np.float32)
         return X, TT, S, Y, T, F, D
 
     Xtr, TTtr, Str, Ytr, T, F, D = extract_raw(Ptrain, ytrain)
@@ -114,7 +101,6 @@ def prepare_data_with_imputation_raw(
 
     Xtt, TTtt, Stt, Ytt, _, _, _ = extract_raw(Ptest_tgt, ytest_tgt)
 
-    # ---- mean impute on RAW stage using SOURCE TRAIN means ----
     feat_means = _compute_feature_means_from_raw(
         Xtr, TTtr, missing_value_num=MISSING_VALUE, missing_time_num=MISSING_TIME_MIN
     )
@@ -143,32 +129,24 @@ def tensorize_from_raw_dicts(
     source_raw: dict,
     target_raw: dict,
 ):
-    """
-    Convert RAW dicts -> normalized tensors, using SOURCE TRAIN stats only,
-    and excluding categorical/binary features from normalization via categorical_idx_{source}.npy.
-    """
     T = source_raw["shape"]["T"]
     F = source_raw["shape"]["F"]
     D = source_raw["shape"]["D"]
 
-    # categorical indices (binary itemids) excluded from normalization
     cat_idx_path = os.path.join(processed_dir, f"categorical_idx_{source}.npy")
     cat_idx = np.load(cat_idx_path, allow_pickle=True).astype(np.int64)
     cat_idx = cat_idx[(cat_idx >= 0) & (cat_idx < F)]
 
-    # stats on SOURCE TRAIN only (missing=0)
-    mf, stdf = getStats_fixed(source_raw["Xtrain"], missing_value=MISSING_VALUE)  # [F], [F]
-    ms, ss   = getStats_static(source_raw["Strain"], dataset="Default")           # [D], [D]
+    mf, stdf = getStats_fixed(source_raw["Xtrain"], missing_value=MISSING_VALUE)
+    ms, ss   = getStats_static(source_raw["Strain"], dataset="Default")
 
     mf = mf.copy(); stdf = stdf.copy()
     mf[cat_idx] = 0.0
     stdf[cat_idx] = 1.0
 
-    # helper: pack back into PT-like list for tensorize_normalize_multilabel (expects list of dicts)
     def wrap_as_P_list(X, TT, S):
-        N = X.shape[0]
         P_list = []
-        for i in range(N):
+        for i in range(X.shape[0]):
             P_list.append({
                 "arr": X[i],
                 "time": TT[i],
@@ -184,15 +162,12 @@ def tensorize_from_raw_dicts(
             missing_time=MISSING_TIME_MIN,
         )
 
-    # source
     Xtr, Str, TTtr, Ytr = tz(source_raw["Xtrain"], source_raw["Ttrain"], source_raw["Strain"], source_raw["Ytrain"])
     Xva, Sva, TTva, Yva = tz(source_raw["Xval"],   source_raw["Tval"],   source_raw["Sval"],   source_raw["Yval"])
     Xte, Ste, TTte, Yte = tz(source_raw["Xtest"],  source_raw["Ttest"],  source_raw["Stest"],  source_raw["Ytest"])
 
-    # target test only
     Xtt, Stt, TTtt, Ytt = tz(target_raw["Xtest"], target_raw["Ttest"], target_raw["Stest"], target_raw["Ytest"])
 
-    # permute: [N,T,2F] -> [T,N,2F], time [N,T,1] -> [T,N]
     def permute(X, TM):
         return X.permute(1, 0, 2), TM.squeeze(-1).permute(1, 0)
 
@@ -229,11 +204,6 @@ def tensorize_from_raw_dicts(
 
 
 class PositionalEncodingTF(nn.Module):
-    """
-    Time-based sin/cos encoding (same spirit as original).
-    - Uses P_time in HOURS with padding=-1/2880.
-    - Output on same device as input.
-    """
     def __init__(self, d_model: int, max_len: int = 800, MAX: int = 10000):
         super().__init__()
         self.max_len = max_len
@@ -242,17 +212,16 @@ class PositionalEncodingTF(nn.Module):
         self._num_timescales = d_model // 2
 
     def getPE(self, P_time: torch.Tensor) -> torch.Tensor:
-        # P_time: [T,B] in hours (padding=-1/2880)
         device = P_time.device
         P_time = P_time.float()
 
         timescales = self.max_len ** np.linspace(0, 1, self._num_timescales)
-        timescales = torch.tensor(timescales, dtype=torch.float32, device=device)  # [d/2]
+        timescales = torch.tensor(timescales, dtype=torch.float32, device=device)
 
-        times = P_time.unsqueeze(2)  # [T,B,1]
-        scaled_time = times / timescales[None, None, :]  # [T,B,d/2]
+        times = P_time.unsqueeze(2)
+        scaled_time = times / timescales[None, None, :]
 
-        pe = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=-1)  # [T,B,d]
+        pe = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=-1)
         return pe
 
     def forward(self, P_time: torch.Tensor) -> torch.Tensor:
@@ -260,17 +229,6 @@ class PositionalEncodingTF(nn.Module):
 
 
 class TransformerModel2(nn.Module):
-    """
-    Original baseline-style Transformer, but fixed to:
-      - be device-safe (no hardcoded .cuda())
-      - build correct src_key_padding_mask shape [B, T] (bool)
-      - not break when src is already [T,B,F] (not [T,B,2F])
-      - avoid the buggy squeeze(1) mask logic
-      - safe mean aggregation denominator (no "+1" bias)
-
-    NOTE: This model still intentionally DROPS the mask channel if you pass [T,B,2F]
-          (baseline behavior). You said you accept that.
-    """
     def __init__(
         self,
         d_inp, d_model, nhead, nhid, nlayers, dropout,
@@ -315,54 +273,42 @@ class TransformerModel2(nn.Module):
             self.emb.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, static, times, lengths):
-        """
-        src:    [T,B,2F] (values+mask) OR [T,B,F]
-        times:  [T,B]  (hours; padding = -1/2880)
-        lengths:[B]    (#valid timesteps, >=1)
-        """
         device = src.device
         T, B, Fin = src.shape
 
-        # baseline behavior: if input looks like [T,B,2F], drop mask half
         if Fin % 2 == 0:
-            # If you *always* pass 2F this is fine.
-            # If you sometimes pass F where F is even, this would wrongly halve.
-            # So guard: only halve if it matches expected 2*d_inp.
             if hasattr(self.encoder, "in_features") and Fin == 2 * self.encoder.in_features:
                 src = src[:, :, : Fin // 2]
 
-        # now src should be [T,B,d_inp]
-        src = self.encoder(src)                # [T,B,d_enc]
-        pe = self.pos_encoder(times).to(device)  # [T,B,d_pe]
-        x = torch.cat([pe, src], dim=2)        # [T,B,d_pe+d_enc]
+        src = self.encoder(src)
+        pe = self.pos_encoder(times).to(device)
+        x = torch.cat([pe, src], dim=2)
         x = self.dropout(x)
 
         emb = None
         if static is not None:
-            emb = self.emb(static)             # [B,d_inp]
+            emb = self.emb(static)
 
-        # src_key_padding_mask: [B,T] where True means PAD
         lengths = lengths.to(device).clamp(min=1)
-        pad_mask = (torch.arange(T, device=device).unsqueeze(0) >= lengths.unsqueeze(1))  # [B,T] bool
+        pad_mask = (torch.arange(T, device=device).unsqueeze(0) >= lengths.unsqueeze(1))
 
-        out = self.transformer_encoder(x, src_key_padding_mask=pad_mask)  # [T,B,H]
+        out = self.transformer_encoder(x, src_key_padding_mask=pad_mask)
 
-        # aggregation with valid mask
-        valid = (~pad_mask).transpose(0, 1).unsqueeze(2).to(out.dtype)  # [T,B,1]
+        valid = (~pad_mask).transpose(0, 1).unsqueeze(2).to(out.dtype)
         if self.aggreg == "mean":
-            denom = lengths.unsqueeze(1).to(out.dtype)  # [B,1]
-            out = (out * valid).sum(dim=0) / denom      # [B,H]
+            denom = lengths.unsqueeze(1).to(out.dtype)
+            out = (out * valid).sum(dim=0) / denom
         elif self.aggreg == "max":
             out = out.masked_fill(~valid.bool(), float("-inf"))
-            out, _ = out.max(dim=0)                     # [B,H]
-            out = torch.nan_to_num(out, neginf=0.0)      # if a sequence is fully padded (shouldn't happen)
+            out, _ = out.max(dim=0)
+            out = torch.nan_to_num(out, neginf=0.0)
         else:
             raise ValueError(f"Unknown aggreg={self.aggreg}")
 
         if emb is not None:
-            out = torch.cat([out, emb], dim=1)           # [B, H + d_inp]
+            out = torch.cat([out, emb], dim=1)
 
-        logits = self.mlp(out)                           # [B,C]
+        logits = self.mlp(out)
         return logits
 
 
@@ -370,8 +316,8 @@ def run_train_eval(
     source: str,
     target: str,
     split: int = 1,
-    data_root: str = "./data",                 # ✅ base folder that contains split{i}/
-    processed_root: str = "./data_rd_template",# ✅ root to store per-split processed files
+    data_root: str = "./data",
+    processed_root: str = "./data_rd_template",
     model_name: str = "TransformerModel2",
     use_wandb: bool = False,
     wandb_project: str = "Baselines",
@@ -387,20 +333,18 @@ def run_train_eval(
     dropout: float = 0.2,
     MAX: int = 100,
     aggreg: str = "mean",
-    imputation: str = "no_imputation",  # "no_imputation" | "mean"
+    imputation: str = "no_imputation",
     seed: int = 9871,
     use_source_aug: bool = False,
     source_aug_suffix: str = "aug",
     use_target_aug: bool = False,
     target_aug_suffix: str = "aug",
 ):
-    
     assert imputation in {"no_imputation", "mean"}
 
     seed_everything(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ✅ build (or reuse) per-split processed inputs for both domains
     aug_tag = _aug_tag(
     use_source_aug, source_aug_suffix,
     use_target_aug, target_aug_suffix,
@@ -463,10 +407,10 @@ def run_train_eval(
             target_aug_suffix=target_aug_suffix,
         )
 
-    Xtr = source_dict["Ptrain"]         # [T,N,2F]
-    Ttr = source_dict["Ptrain_time"]    # [T,N] hours
-    Str = source_dict["Ptrain_static"]  # [N,D]
-    Ytr = source_dict["ytrain"].float() # [N,C]
+    Xtr = source_dict["Ptrain"]
+    Ttr = source_dict["Ptrain_time"]
+    Str = source_dict["Ptrain_static"]
+    Ytr = source_dict["ytrain"].float()
 
     Xva = source_dict["Pval"]
     Tva = source_dict["Pval_time"]
@@ -485,15 +429,12 @@ def run_train_eval(
 
     outcome_cols = source_dict.get("outcome_cols", [f"task_{i}" for i in range(Ytr.shape[1])])
 
-
-    # move to device
     Xtr, Ttr, Str, Ytr = Xtr.to(device), Ttr.to(device), Str.to(device), Ytr.to(device)
     Xva, Tva, Sva, Yva = Xva.to(device), Tva.to(device), Sva.to(device), Yva.to(device)
     Xte_s, Tte_s, Ste_s, Yte_s = Xte_s.to(device), Tte_s.to(device), Ste_s.to(device), Yte_s.to(device)
     Xte_t, Tte_t, Ste_t, Yte_t = Xte_t.to(device), Tte_t.to(device), Ste_t.to(device), Yte_t.to(device)
 
-    # infer dims
-    d_inp = Xtr.shape[2]     # ✅ 2F (value+mask)
+    d_inp = Xtr.shape[2]
     C = Ytr.shape[1]
 
     model = TransformerModel2(
@@ -514,7 +455,6 @@ def run_train_eval(
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
 
-    # wandb
     wb = None
     run_name = f"{model_name}_{source}_to_{target}_split{split}__{aug_tag}"
     if use_wandb:
@@ -548,7 +488,6 @@ def run_train_eval(
         wandb.watch(model, log="gradients", log_freq=100)
 
     def lengths_from_times(hours_TN: torch.Tensor) -> torch.Tensor:
-        # hours_TN: [T,N], padding=-1/2880
         return (hours_TN != MISSING_TIME_HR).sum(dim=0).clamp(min=1)
 
     patience = 7
@@ -614,7 +553,6 @@ def run_train_eval(
                 "val/valid_labels": val_valid,
             }
 
-            # per-label logging with column names
             for i, name in enumerate(outcome_cols):
                 if i < len(val_valid_mask) and val_valid_mask[i]:
                     safe_name = str(name).replace(" ", "_")
@@ -671,7 +609,6 @@ def run_train_eval(
     torch.save(ckpt, save_path)
     print(f"✅ Saved trained model to {save_path}")
 
-    # final tests
     src_test_loss, src_auroc, src_auprc, src_acc, src_valid, src_auroc_per, src_auprc_per, src_valid_mask = metrics_multilabel_batched(
         model, Xte_s, Tte_s, Ste_s, Yte_s, criterion, batch_size=batch_size, device=device
     )
@@ -725,7 +662,6 @@ def main():
     parser.add_argument("--wandb_project", type=str, default="Baselines")
     parser.add_argument("--wandb_entity", type=str, default="jwseo118-korea-university")
 
-    # model knobs
     parser.add_argument("--d_model", type=int, default=36)
     parser.add_argument("--nhead", type=int, default=1)
     parser.add_argument("--nlayers", type=int, default=1)

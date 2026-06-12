@@ -39,6 +39,8 @@ def _aug_tag(
     src_tag = f"srcAug-{source_aug_suffix}" if use_source_aug else "srcOrig"
     tgt_tag = f"tgtAug-{target_aug_suffix}" if use_target_aug else "tgtOrig"
     return f"{src_tag}__{tgt_tag}"
+
+
 class PositionalEncodingTF(nn.Module):
     def __init__(self, d_model, max_len=500, MAX=10000):
         super(PositionalEncodingTF, self).__init__()
@@ -100,7 +102,7 @@ class Raindrop_v2(nn.Module):
 
         self.d_ob = int(d_model/d_inp)
 
-        self.encoder = nn.Linear(d_inp*self.d_ob, self.d_inp*self.d_ob)
+        self.encoder = nn.Linear(d_inp*self.d_ob, d_inp*self.d_ob)
 
         self.pos_encoder = PositionalEncodingTF(d_pe, max_len, MAX)
 
@@ -260,6 +262,7 @@ class Raindrop_v2(nn.Module):
         output = self.mlp_static(output)
 
         return output
+
 def lengths_from_times(hours_TN: torch.Tensor) -> torch.Tensor:
     """hours_TN: [T,N], padding=-1/2880 hours."""
     return (hours_TN != MISSING_TIME_HR).sum(dim=0).clamp(min=1)
@@ -369,7 +372,6 @@ def run_train_eval(
     Ste_t = target_dict["Ptest_static"]
     Yte_t = target_dict["ytest"].float()
 
-    # outcome column names (saved during data preparation)
     outcome_cols = source_dict.get("outcome_cols", None)
     if outcome_cols is None:
         outcome_cols = [f"task_{i}" for i in range(Ytr.shape[1])]
@@ -415,7 +417,6 @@ def run_train_eval(
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    # wandb
     wb = None
     run_name = f"Raindrop_{source}_{split}_{aug_tag}"
     if use_wandb:
@@ -455,7 +456,6 @@ def run_train_eval(
         )
         wandb.watch(model, log="gradients", log_freq=100)
 
-    # early stopping on macro AUPRC (source val)
     patience = 7
     no_improve_epochs = 0
     best_val_auprc = -1.0
@@ -482,7 +482,6 @@ def run_train_eval(
 
             lengths = lengths_from_times(Tb)
 
-            # Raindrop_v2 returns (logits, distance, aux)
             out = model(Xb, Sb, Tb, lengths)
             logits = out[0] if isinstance(out, (tuple, list)) else out
 
@@ -497,7 +496,6 @@ def run_train_eval(
 
         train_loss = loss_sum / max(1, steps)
 
-        # validation (includes per-task metrics)
         (
             val_loss,
             val_auroc,
@@ -532,7 +530,6 @@ def run_train_eval(
                 "val/valid_labels": val_valid,
             }
 
-            # per-task metrics with outcome column names
             for i, name in enumerate(outcome_cols):
                 if i < len(val_valid_mask) and bool(val_valid_mask[i]):
                     key = _safe_metric_key(name)
@@ -541,7 +538,6 @@ def run_train_eval(
 
             wb.log(log_dict)
 
-        # early stopping on macro AUPRC
         if np.isfinite(val_auprc) and float(val_auprc) > best_val_auprc:
             best_val_auprc = float(val_auprc)
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -558,11 +554,9 @@ def run_train_eval(
     elapsed_min = (time.time() - t0) / 60.0
     print(f"Done. elapsed={elapsed_min:.2f} min | best src-val AUPRC={best_val_auprc:.4f}")
 
-    # restore best
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # save checkpoint
     save_dir = "./baseline_models_rd"
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f"{run_name}.pt")
@@ -604,7 +598,6 @@ def run_train_eval(
     torch.save(ckpt, save_path)
     print(f"✅ Saved trained model to {save_path}")
 
-    # final tests (source + target), with per-task logging
     (
         src_test_loss,
         src_auroc,
