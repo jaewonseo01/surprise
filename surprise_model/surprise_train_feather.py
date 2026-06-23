@@ -19,7 +19,7 @@ except Exception:
 # ---- project modules ----
 from surprise_data.feather_domains import build_feather_split_loaders
 from surprise_configs_feather import build_feather_cfg_from_args, FeatherConfig
-from surprise_models.build import build_model
+from build import build_model
 from surprise_lit.pretrain import PretrainLit
 from surprise_lit.downstream import STRaTSLit
 
@@ -323,7 +323,7 @@ def main():
 
     # config args
     ap.add_argument("--project_name", type=str, default="CV_5fold")
-    ap.add_argument("--wandb_entity", type=str, default="jwseo118-korea-university")
+    ap.add_argument("--wandb_entity", type=str, default="jwseo118-korea-university") # Change to own wandb entity
     ap.add_argument("--data_root", type=str, default="./data")
     ap.add_argument("--source_domain", type=str, default="mimic", choices=["mimic", "eicu"])
     ap.add_argument("--target_domain", type=str, default="eicu", choices=["mimic", "eicu"])
